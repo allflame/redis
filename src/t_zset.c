@@ -1263,6 +1263,8 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
     int incr = (*flags & ZADD_INCR) != 0;
     int nx = (*flags & ZADD_NX) != 0;
     int xx = (*flags & ZADD_XX) != 0;
+    int gt = (*flags & ZADD_GT) != 0;
+    int lt = (*flags & ZADD_LT) != 0;
     *flags = 0; /* We'll return our response flags. */
     double curscore;
 
@@ -1282,7 +1284,16 @@ int zsetAdd(robj *zobj, double score, sds ele, int *flags, double *newscore) {
                 *flags |= ZADD_NOP;
                 return 1;
             }
-
+            /* GT? Return if score is lower */
+            if (gt && score < curscore) {
+                *flags |= ZADD_NOP;
+                return 1;
+            }
+            /* LT? Return if score is greater */
+            if (lt && score > curscore) {
+                *flags |= ZADD_NOP;
+                return 1;
+            }
             /* Prepare the score for the increment if needed. */
             if (incr) {
                 score += curscore;
@@ -1508,6 +1519,9 @@ void zaddGenericCommand(client *c, int flags) {
         else if (!strcasecmp(opt,"xx")) flags |= ZADD_XX;
         else if (!strcasecmp(opt,"ch")) flags |= ZADD_CH;
         else if (!strcasecmp(opt,"incr")) flags |= ZADD_INCR;
+        else if (!strcasecmp(opt,"cond")) flags |= ZADD_COND;
+        else if (!strcasecmp(opt,"gt")) flags |= ZADD_GT;
+        else if (!strcasecmp(opt,"lt")) flags |= ZADD_LT;
         else break;
         scoreidx++;
     }
@@ -1516,7 +1530,10 @@ void zaddGenericCommand(client *c, int flags) {
     int incr = (flags & ZADD_INCR) != 0;
     int nx = (flags & ZADD_NX) != 0;
     int xx = (flags & ZADD_XX) != 0;
+    int cond = (flags & ZADD_COND) != 0;
     int ch = (flags & ZADD_CH) != 0;
+    int lt = (flags & ZADD_GT) != 0;
+    int gt = (flags & ZADD_LT) != 0;
 
     /* After the options, we expect to have an even number of args, since
      * we expect any number of score-element pairs. */
@@ -1528,9 +1545,15 @@ void zaddGenericCommand(client *c, int flags) {
     elements /= 2; /* Now this holds the number of score-element pairs. */
 
     /* Check for incompatible options. */
-    if (nx && xx) {
+    if (nx + xx + cond > 1) {
         addReplyError(c,
-            "XX and NX options at the same time are not compatible");
+            "Only one of XX, NX, COND options is allowed at the same time");
+        return;
+    }
+
+    if (lt && gt) {
+        addReplyError(c,
+            "LT and GT options at the same time are not compatible");
         return;
     }
 
